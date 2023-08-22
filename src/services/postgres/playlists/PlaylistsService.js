@@ -1,12 +1,14 @@
 const { Pool } = require('pg');
 const { nanoid } = require('nanoid');
-const InvariantError = require('../../exceptions/InvariantError');
-const NotFoundError = require('../../exceptions/NotFoundError');
-const AuthorizationError = require('../../exceptions/AuthorizationError');
+const InvariantError = require('../../../exceptions/InvariantError');
+const NotFoundError = require('../../../exceptions/NotFoundError');
+const AuthorizationError = require('../../../exceptions/AuthorizationError');
 
 class PlaylistsService {
-  constructor() {
+  constructor(collaborationsService) {
     this._pool = new Pool();
+
+    this._collaborationsService = collaborationsService;
   }
 
   async addPlaylist({ name, owner }) {
@@ -28,7 +30,7 @@ class PlaylistsService {
 
   async getPlaylists(owner) {
     const query = {
-      text: 'SELECT playlists.id, playlists.name, users.username FROM playlists INNER JOIN users ON users.id = playlists.owner WHERE playlists.owner = $1 OR users.id = $1',
+      text: 'SELECT playlists.id, playlists.name, users.username FROM playlists INNER JOIN users ON users.id = playlists.owner LEFT JOIN collaborations c ON playlists.id = c.playlist_id WHERE playlists.owner = $1 OR c.user_id = $1 GROUP BY playlists.id, playlists.name, users.username',
       values: [owner],
     };
 
@@ -102,6 +104,23 @@ class PlaylistsService {
     const playlist = result.rows[0];
     if (playlist.owner !== owner) {
       throw new AuthorizationError('Anda tidak berhak mengakses resource ini');
+    }
+  }
+
+  async verifyPlaylistAccess(id, userId) {
+    try {
+      await this.verifyPlaylistOwner(id, userId);
+    } catch (error) {
+      if (error instanceof NotFoundError) throw error;
+
+      try {
+        await this._collaborationsService.verifyCollaboration(
+          id,
+          userId,
+        );
+      } catch {
+        throw error;
+      }
     }
   }
 }
